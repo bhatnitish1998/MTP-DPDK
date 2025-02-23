@@ -16,6 +16,8 @@
 #include <getopt.h>
 #include <signal.h>
 #include <stdbool.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include <rte_common.h>
 #include <rte_log.h>
@@ -116,10 +118,16 @@ struct l2fwd_port_statistics port_statistics[RTE_MAX_ETHPORTS];
 /* A tsc-based timer responsible for triggering statistics printout */
 static uint64_t timer_period = 10; /* default period is 10 seconds */
 
+
 /* Print out statistics on packets dropped */
 static void
 print_stats(void)
 {
+	FILE *file = fopen("./logs/stats.csv", "w");
+	if (file == NULL) {
+		perror("Error opening file");
+	}
+
 	uint64_t total_packets_dropped, total_packets_tx, total_packets_rx;
 	unsigned portid;
 
@@ -127,41 +135,22 @@ print_stats(void)
 	total_packets_tx = 0;
 	total_packets_rx = 0;
 
-	const char clr[] = { 27, '[', '2', 'J', '\0' };
-	const char topLeft[] = { 27, '[', '1', ';', '1', 'H','\0' };
-
-		/* Clear screen and move to top left */
-	printf("%s%s", clr, topLeft);
-
-	printf("\nPort statistics ====================================");
-
 	for (portid = 0; portid < RTE_MAX_ETHPORTS; portid++) {
 		/* skip disabled ports */
 		if ((l2fwd_enabled_port_mask & (1 << portid)) == 0)
 			continue;
-		printf("\nStatistics for port %u ------------------------------"
-			   "\nPackets sent: %24"PRIu64
-			   "\nPackets received: %20"PRIu64
-			   "\nPackets dropped: %21"PRIu64,
-			   portid,
-			   port_statistics[portid].tx,
-			   port_statistics[portid].rx,
-			   port_statistics[portid].dropped);
 
 		total_packets_dropped += port_statistics[portid].dropped;
 		total_packets_tx += port_statistics[portid].tx;
 		total_packets_rx += port_statistics[portid].rx;
 	}
-	printf("\nAggregate statistics ==============================="
-		   "\nTotal packets sent: %18"PRIu64
-		   "\nTotal packets received: %14"PRIu64
-		   "\nTotal packets dropped: %15"PRIu64,
-		   total_packets_tx,
-		   total_packets_rx,
-		   total_packets_dropped);
-	printf("\n====================================================\n");
 
-	fflush(stdout);
+	fprintf(file, "rx_received,%lu\n",total_packets_rx);
+	fprintf(file, "rx_dropped,%lu\n",total_packets_dropped);
+	fprintf(file, "tx_sent,%lu\n",total_packets_tx);
+	fprintf(file, "dummy_count,%lld\n",dummy_count);
+	
+	fclose(file);
 }
 
 static void process_packet(struct rte_mbuf *m)
@@ -261,7 +250,9 @@ l2fwd_main_loop(void)
 
 	while (!force_quit) {
 
-		/* Drains TX queue in its main loop. 8< */
+		if(opt_application_type ==5)
+		{
+					/* Drains TX queue in its main loop. 8< */
 		cur_tsc = rte_rdtsc();
 
 		/*
@@ -302,6 +293,9 @@ l2fwd_main_loop(void)
 			prev_tsc = cur_tsc;
 		}
 		/* >8 End of draining TX queue. */
+
+		}
+
 
 		/* Read packet from RX queues. 8< */
 		for (i = 0; i < qconf->n_rx_port; i++) {
@@ -709,6 +703,10 @@ main(int argc, char **argv)
 		rte_exit(EXIT_FAILURE, "Invalid L2FWD arguments\n");
 	/* >8 End of init EAL. */
 
+	struct stat st = {0};
+    if (stat("./logs", &st) == -1) {
+        mkdir("./logs", 0777);
+    }
 
 	/* convert to number of cycles */
 	timer_period *= rte_get_timer_hz();
@@ -957,6 +955,7 @@ main(int argc, char **argv)
 		printf(" Done\n");
 	}
 
+	print_stats();
 	/* clean up the EAL */
 	rte_eal_cleanup();
 	printf("Bye...\n");
