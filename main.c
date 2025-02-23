@@ -38,25 +38,29 @@
 #include <rte_mbuf.h>
 #include <rte_string_fns.h>
 
-static volatile bool force_quit;
+///////////////////////////////////////
+static int opt_application_type;
+static long long dummy_count;
 
-/* MAC updating enabled by default */
-static int mac_updating = 1;
+
+///////////////////////////////////////
+
+static volatile bool force_quit;
 
 /* Ports set in promiscuous mode off by default. */
 static int promiscuous_on;
 
 #define RTE_LOGTYPE_L2FWD RTE_LOGTYPE_USER1
 
-#define MAX_PKT_BURST 32
+#define MAX_PKT_BURST 64 //32
 #define BURST_TX_DRAIN_US 100 /* TX drain every ~100us */
 #define MEMPOOL_CACHE_SIZE 256
 
 /*
  * Configurable number of RX/TX ring descriptors
  */
-#define RX_DESC_DEFAULT 1024
-#define TX_DESC_DEFAULT 1024
+#define RX_DESC_DEFAULT 4096 //1024
+#define TX_DESC_DEFAULT 4096 //1024
 static uint16_t nb_rxd = RX_DESC_DEFAULT;
 static uint16_t nb_txd = TX_DESC_DEFAULT;
 
@@ -160,25 +164,46 @@ print_stats(void)
 	fflush(stdout);
 }
 
-static void
-l2fwd_mac_updating(struct rte_mbuf *m, unsigned dest_portid)
+static void process_packet(struct rte_mbuf *m)
 {
 	struct rte_ether_hdr *eth;
-	void *tmp;
+    char *packet_data;
+    uint16_t pkt_len;
+    uint16_t offset;
+    struct rte_ether_addr temp_mac;
 
 	eth = rte_pktmbuf_mtod(m, struct rte_ether_hdr *);
 
-	/* 02:00:00:00:00:xx */
-	tmp = &eth->dst_addr.addr_bytes[0];
-	*((uint64_t *)tmp) = 0x000000000002 + ((uint64_t)dest_portid << 40);
+	if(!(opt_application_type==2 || opt_application_type == 1)){
+        rte_ether_addr_copy(&eth->dst_addr, &temp_mac);
+        rte_ether_addr_copy(&eth->src_addr, &eth->dst_addr);
+        rte_ether_addr_copy(&temp_mac, &eth->src_addr);
+    }
 
-	/* src addr */
-	rte_ether_addr_copy(&l2fwd_ports_eth_addr[dest_portid], &eth->src_addr);
+	packet_data = rte_pktmbuf_mtod(m, char *);
+	pkt_len = rte_pktmbuf_pkt_len(m);
+
+	if(opt_application_type == 2)
+	{
+		
+		for(int i =0; i< pkt_len; i+=64)
+			packet_data[i] = packet_data[i+1];
+	}
+	if(opt_application_type == 1)
+	{
+		for(int i =0; i<pkt_len;i+=64)
+		{
+			if(packet_data[i]=='a')
+				dummy_count++;
+		}
+
+	}
 }
+
 
 /* Simple forward. 8< */
 static void
-l2fwd_simple_forward(struct rte_mbuf *m, unsigned portid)
+receive_packet(struct rte_mbuf *m, unsigned portid)
 {
 	unsigned dst_port;
 	int sent;
@@ -186,13 +211,15 @@ l2fwd_simple_forward(struct rte_mbuf *m, unsigned portid)
 
 	dst_port = l2fwd_dst_ports[portid];
 
-	if (mac_updating)
-		l2fwd_mac_updating(m, dst_port);
+	process_packet(m);
 
-	buffer = tx_buffer[dst_port];
-	sent = rte_eth_tx_buffer(dst_port, 0, buffer, m);
-	if (sent)
-		port_statistics[dst_port].tx += sent;
+	if(opt_application_type ==5){
+
+		buffer = tx_buffer[dst_port];
+		sent = rte_eth_tx_buffer(dst_port, 0, buffer, m);
+		if (sent)
+			port_statistics[dst_port].tx += sent;
+	}
 }
 /* >8 End of simple forward. */
 
@@ -291,7 +318,7 @@ l2fwd_main_loop(void)
 			for (j = 0; j < nb_rx; j++) {
 				m = pkts_burst[j];
 				rte_prefetch0(rte_pktmbuf_mtod(m, void *));
-				l2fwd_simple_forward(m, portid);
+				receive_packet(m, portid);
 			}
 		}
 		/* >8 End of read packet from RX queues. */
@@ -319,7 +346,8 @@ l2fwd_usage(const char *prgname)
 	       "       - The source MAC address is replaced by the TX port MAC address\n"
 	       "       - The destination MAC address is replaced by 02:00:00:00:00:TX_PORT_ID\n"
 	       "  --portmap: Configure forwarding port pair mapping\n"
-	       "	      Default: alternate port pairs\n\n",
+	       "	      Default: alternate port pairs\n\n"
+		   " -A  application_type",
 	       prgname);
 }
 
@@ -431,9 +459,9 @@ static const char short_options[] =
 	"P"   /* promiscuous */
 	"q:"  /* number of queues */
 	"T:"  /* timer period */
+	"A:"
 	;
 
-#define CMD_LINE_OPT_NO_MAC_UPDATING "no-mac-updating"
 #define CMD_LINE_OPT_PORTMAP_CONFIG "portmap"
 
 enum {
@@ -441,13 +469,10 @@ enum {
 
 	/* first long only option value must be >= 256, so that we won't
 	 * conflict with short options */
-	CMD_LINE_OPT_NO_MAC_UPDATING_NUM = 256,
 	CMD_LINE_OPT_PORTMAP_NUM,
 };
 
 static const struct option lgopts[] = {
-	{ CMD_LINE_OPT_NO_MAC_UPDATING, no_argument, 0,
-		CMD_LINE_OPT_NO_MAC_UPDATING_NUM},
 	{ CMD_LINE_OPT_PORTMAP_CONFIG, 1, 0, CMD_LINE_OPT_PORTMAP_NUM},
 	{NULL, 0, 0, 0}
 };
@@ -512,8 +537,16 @@ l2fwd_parse_args(int argc, char **argv)
 			}
 			break;
 
-		case CMD_LINE_OPT_NO_MAC_UPDATING_NUM:
-			mac_updating = 0;
+		case 'A':
+			opt_application_type = atoi(optarg);
+			if(opt_application_type == 0)
+				printf("MAC swap and drop\n");
+			else if(opt_application_type == 1)
+				printf("Read every cache line\n");
+			else if(opt_application_type == 2)
+				printf("Write every cache line\n");
+			else if(opt_application_type == 5)
+				printf("MAC swap and forward\n");
 			break;
 
 		default:
@@ -676,7 +709,6 @@ main(int argc, char **argv)
 		rte_exit(EXIT_FAILURE, "Invalid L2FWD arguments\n");
 	/* >8 End of init EAL. */
 
-	printf("MAC updating %s\n", mac_updating ? "enabled" : "disabled");
 
 	/* convert to number of cycles */
 	timer_period *= rte_get_timer_hz();
@@ -764,9 +796,10 @@ main(int argc, char **argv)
 		       portid, l2fwd_dst_ports[portid]);
 	}
 
-	nb_mbufs = RTE_MAX(nb_ports * (nb_rxd + nb_txd + MAX_PKT_BURST +
-		nb_lcores * MEMPOOL_CACHE_SIZE), 8192U);
-
+	// nb_mbufs = RTE_MAX(nb_ports * (nb_rxd + nb_txd + MAX_PKT_BURST +
+	// 	nb_lcores * MEMPOOL_CACHE_SIZE), 8192U);
+	nb_mbufs = 16384U;
+	
 	/* Create the mbuf pool. 8< */
 	l2fwd_pktmbuf_pool = rte_pktmbuf_pool_create("mbuf_pool", nb_mbufs,
 		MEMPOOL_CACHE_SIZE, 0, RTE_MBUF_DEFAULT_BUF_SIZE,
