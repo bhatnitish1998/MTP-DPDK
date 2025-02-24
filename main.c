@@ -123,6 +123,12 @@ static uint64_t timer_period = 10; /* default period is 10 seconds */
 static void
 print_stats(void)
 {
+	struct stat st = {0};
+    if (stat("./logs", &st) == -1) {
+        mkdir("./logs", 0777);
+    }
+
+
 	FILE *file = fopen("./logs/stats.csv", "w");
 	if (file == NULL) {
 		perror("Error opening file");
@@ -175,7 +181,7 @@ static void process_packet(struct rte_mbuf *m)
 	if(opt_application_type == 2)
 	{
 		
-		for(int i =0; i< pkt_len; i+=64)
+		for (int i = 0; i + 1 < pkt_len; i += 64)
 			packet_data[i] = packet_data[i+1];
 	}
 	if(opt_application_type == 1)
@@ -209,6 +215,8 @@ receive_packet(struct rte_mbuf *m, unsigned portid)
 		if (sent)
 			port_statistics[dst_port].tx += sent;
 	}
+	else
+		rte_pktmbuf_free(m);
 }
 /* >8 End of simple forward. */
 
@@ -703,10 +711,6 @@ main(int argc, char **argv)
 		rte_exit(EXIT_FAILURE, "Invalid L2FWD arguments\n");
 	/* >8 End of init EAL. */
 
-	struct stat st = {0};
-    if (stat("./logs", &st) == -1) {
-        mkdir("./logs", 0777);
-    }
 
 	/* convert to number of cycles */
 	timer_period *= rte_get_timer_hz();
@@ -946,6 +950,8 @@ main(int argc, char **argv)
 	RTE_ETH_FOREACH_DEV(portid) {
 		if ((l2fwd_enabled_port_mask & (1 << portid)) == 0)
 			continue;
+
+		print_stats();
 		printf("Closing port %d...", portid);
 		ret = rte_eth_dev_stop(portid);
 		if (ret != 0)
