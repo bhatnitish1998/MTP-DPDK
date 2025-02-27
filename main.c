@@ -42,8 +42,9 @@
 
 ///////////////////////////////////////
 static int opt_application_type;
+static int opt_stack;
 static long long dummy_count;
-
+static long long dummy_primes;
 
 ///////////////////////////////////////
 
@@ -119,6 +120,33 @@ struct l2fwd_port_statistics port_statistics[RTE_MAX_ETHPORTS];
 static uint64_t timer_period = 10; /* default period is 10 seconds */
 
 
+///////////// Add processing time /////////////
+
+static bool inline  is_prime(long long num) {
+    if (num <= 1) return false;
+    if (num == 2 || num == 3) return true;
+    if (num % 2 == 0 || num % 3 == 0) return false;
+
+    for (long long i = 5; i <= num/2; i += 6) {
+        if (num % i == 0 || num % (i + 2) == 0) return false;
+    }
+    return true;
+}
+
+static int inline get_prime_count(long long limit){
+
+	int counts=0;
+	for(long long i=1; i<limit;i++)
+	{
+		if(is_prime(i))
+			counts++;
+	}
+
+	return counts;
+}
+
+///////////////////////////////////////////////
+
 /* Print out statistics on packets dropped */
 static void
 print_stats(void)
@@ -155,6 +183,7 @@ print_stats(void)
 	fprintf(file, "rx_dropped,%lu\n",total_packets_dropped);
 	fprintf(file, "tx_sent,%lu\n",total_packets_tx);
 	fprintf(file, "dummy_count,%lld\n",dummy_count);
+	fprintf(file, "dummy_primes,%lld\n",dummy_primes);
 	
 	fclose(file);
 }
@@ -184,7 +213,7 @@ static void process_packet(struct rte_mbuf *m)
 		for (int i = 0; i + 1 < pkt_len; i += 64)
 			packet_data[i] = packet_data[i+1];
 	}
-	if(opt_application_type == 1)
+	if(opt_application_type == 1 | opt_application_type == 3)
 	{
 		for(int i =0; i<pkt_len;i+=64)
 		{
@@ -193,6 +222,11 @@ static void process_packet(struct rte_mbuf *m)
 		}
 
 	}
+
+	if(opt_application_type == 3 ){
+		dummy_primes+=get_prime_count(30);
+	}
+
 }
 
 
@@ -349,7 +383,8 @@ l2fwd_usage(const char *prgname)
 	       "       - The destination MAC address is replaced by 02:00:00:00:00:TX_PORT_ID\n"
 	       "  --portmap: Configure forwarding port pair mapping\n"
 	       "	      Default: alternate port pairs\n\n"
-		   " -A  application_type",
+		   " -A  application_type"
+		   " -S  stack mode of operation",
 	       prgname);
 }
 
@@ -462,6 +497,7 @@ static const char short_options[] =
 	"q:"  /* number of queues */
 	"T:"  /* timer period */
 	"A:"
+	"S"
 	;
 
 #define CMD_LINE_OPT_PORTMAP_CONFIG "portmap"
@@ -549,6 +585,10 @@ l2fwd_parse_args(int argc, char **argv)
 				printf("Write every cache line\n");
 			else if(opt_application_type == 5)
 				printf("MAC swap and forward\n");
+			break;
+
+		case 'S':
+			opt_stack =1;
 			break;
 
 		default:
@@ -801,11 +841,22 @@ main(int argc, char **argv)
 	// nb_mbufs = RTE_MAX(nb_ports * (nb_rxd + nb_txd + MAX_PKT_BURST +
 	// 	nb_lcores * MEMPOOL_CACHE_SIZE), 8192U);
 	nb_mbufs = 16384U;
-	
+
 	/* Create the mbuf pool. 8< */
-	l2fwd_pktmbuf_pool = rte_pktmbuf_pool_create("mbuf_pool", nb_mbufs,
-		MEMPOOL_CACHE_SIZE, 0, RTE_MBUF_DEFAULT_BUF_SIZE,
-		rte_socket_id());
+	if (opt_stack)
+	{
+		l2fwd_pktmbuf_pool = rte_pktmbuf_pool_create_by_ops("mbuf_pool", nb_mbufs,
+			MEMPOOL_CACHE_SIZE, 0, RTE_MBUF_DEFAULT_BUF_SIZE,
+			rte_socket_id(),"stack");
+
+	}
+	else
+	{
+		l2fwd_pktmbuf_pool = rte_pktmbuf_pool_create("mbuf_pool", nb_mbufs,
+			MEMPOOL_CACHE_SIZE, 0, RTE_MBUF_DEFAULT_BUF_SIZE,
+			rte_socket_id());
+	}
+	
 	if (l2fwd_pktmbuf_pool == NULL)
 		rte_exit(EXIT_FAILURE, "Cannot init mbuf pool\n");
 	/* >8 End of create the mbuf pool. */
