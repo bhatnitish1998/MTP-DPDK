@@ -40,12 +40,16 @@
 #include <rte_mbuf.h>
 #include <rte_string_fns.h>
 
+
+#include "hashmap.h"
+
 ///////////////////////////////////////
 static int opt_application_type;
 static int opt_stack;
 static long long dummy_count;
 static long long dummy_primes;
 
+HashMap map;
 ///////////////////////////////////////
 
 static volatile bool force_quit;
@@ -120,33 +124,6 @@ struct l2fwd_port_statistics port_statistics[RTE_MAX_ETHPORTS];
 static uint64_t timer_period = 10; /* default period is 10 seconds */
 
 
-///////////// Add processing time /////////////
-
-static bool inline  is_prime(long long num) {
-    if (num <= 1) return false;
-    if (num == 2 || num == 3) return true;
-    if (num % 2 == 0 || num % 3 == 0) return false;
-
-    for (long long i = 5; i <= num/2; i += 6) {
-        if (num % i == 0 || num % (i + 2) == 0) return false;
-    }
-    return true;
-}
-
-static int inline get_prime_count(long long limit){
-
-	int counts=0;
-	for(long long i=1; i<limit;i++)
-	{
-		if(is_prime(i))
-			counts++;
-	}
-
-	return counts;
-}
-
-///////////////////////////////////////////////
-
 /* Print out statistics on packets dropped */
 static void
 print_stats(void)
@@ -213,7 +190,7 @@ static void process_packet(struct rte_mbuf *m)
 		for (int i = 0; i + 1 < pkt_len; i += 64)
 			packet_data[i] = packet_data[i+1];
 	}
-	if(opt_application_type == 1 | opt_application_type == 3)
+	if(opt_application_type == 1 )
 	{
 		for(int i =0; i<pkt_len;i+=64)
 		{
@@ -224,9 +201,21 @@ static void process_packet(struct rte_mbuf *m)
 	}
 
 	if(opt_application_type == 3 ){
-		dummy_primes+=get_prime_count(30);
-	}
+	for(int i =0; i<pkt_len;i+=64)
+		{
+			if(packet_data[i]=='a')
+			dummy_count++;
 
+			int read_key = rand()%20000;
+			int value;
+
+			if (search_key(&map, read_key, &value)) {
+				dummy_count+=value;
+			} else {
+				dummy_count++;
+			}
+		}
+	}
 }
 
 
@@ -751,6 +740,16 @@ main(int argc, char **argv)
 		rte_exit(EXIT_FAILURE, "Invalid L2FWD arguments\n");
 	/* >8 End of init EAL. */
 
+	/////////////////////////////
+	srand(614);
+    initHashMap(&map);
+
+	for(int i =1; i< 9999; i++)
+	{
+		int value = rand();
+		insert_key(&map, i,value);
+	}
+	/////////////////////////////
 
 	/* convert to number of cycles */
 	timer_period *= rte_get_timer_hz();
